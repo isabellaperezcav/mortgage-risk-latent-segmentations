@@ -1,0 +1,34 @@
+# =========================
+# Entornos virtuales
+# =========================
+venv/
+.env/
+.venv/
+
+# =========================
+# Archivos de datos
+# =========================
+*.csv
+*.parquet
+data/
+
+# =========================
+# Archivos de Python
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+
+# =========================
+# Archivos del sistema
+# =========================
+.DS_Store
+Thumbs.db
+
+
+# Model artifacts
+*.pt
+*.npz
+*.pkl
