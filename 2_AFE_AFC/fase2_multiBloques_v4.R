@@ -425,30 +425,54 @@ cat("\n", strrep("=", 70), "\n")
 cat("INTEGRACIÓN: Latent_Space = [F_originación | F_comportamiento | F_macro]\n")
 cat(strrep("=", 70), "\n")
 
-# Alinear filas (usar loan_id como ancla)
-n_full <- nrow(df)
-
-# Reconstruir índices de observaciones válidas para cada bloque
+# ── Índices de observaciones válidas por bloque ───────────────────────────────
+# Bug corregido: vars_b3 → vars_b3_reduced (vars_b3 no está definida)
 idx_b1 <- which(complete.cases(df[, vars_b1]))
 idx_b2 <- which(complete.cases(df[, vars_b2]))
-idx_b3 <- which(complete.cases(df[, vars_b3]))
+idx_b3 <- which(complete.cases(df[, vars_b3_reduced]))   # FIX: vars_b3 → vars_b3_reduced
 
 # Filas comunes a los tres bloques
 idx_common <- Reduce(intersect, list(idx_b1, idx_b2, idx_b3))
 cat("  Observaciones con los 3 bloques completos:", length(idx_common), "\n")
 
+# ── Extraer scores de B1 (AFC lavaan) ────────────────────────────────────────
+scores_b1_all <- lavPredict(b1_afc$fit)     # matriz (n_b1 × 4)
+
+# ── Scores de B2: índice compuesto (rowMeans escalado) ───────────────────────
+# Bug corregido: Bloque 2 no tiene AFC ni scores_b2 → usar indice_comportamiento
+# que ya fue construido con rowMeans(b2_scaled) y guardado en df$indice_comportamiento
+scores_b2_vec <- df$indice_comportamiento   # vector de largo nrow(df), NA fuera de idx_b2
+
+# ── Extraer scores de B3 (AFC lavaan) ────────────────────────────────────────
+scores_b3_all <- lavPredict(b3_afc$fit)     # matriz (n_b3 × 1)
+
+# ── Construir espacio latente unificado ───────────────────────────────────────
 latent_space <- bind_cols(
+  # loan_id
   df[idx_common, "loan_id"],
-  as_tibble(scores_b1[match(idx_common, idx_b1), , drop = FALSE]) %>%
+  
+  # B1: factores de originación (4 factores → orig_F_crediticia, etc.)
+  as_tibble(
+    scores_b1_all[match(idx_common, idx_b1), , drop = FALSE]
+  ) %>%
     rename_with(~ paste0("orig_", .)),
-  as_tibble(scores_b2[match(idx_common, idx_b2), , drop = FALSE]) %>%
-    rename_with(~ paste0("comp_", .)),
-  as_tibble(scores_b3[match(idx_common, idx_b3), , drop = FALSE]) %>%
+  
+  # B2: factor único de comportamiento (índice compuesto)
+  # Bug corregido: scores_b2[match(...)] → extraer directamente del vector df$
+  tibble(comp_F_deterioro = scores_b2_vec[idx_common]),
+  
+  # B3: factor de cohorte / macro
+  as_tibble(
+    scores_b3_all[match(idx_common, idx_b3), , drop = FALSE]
+  ) %>%
     rename_with(~ paste0("macro_", .))
+  
 ) %>%
-  # Añadir state_ord como covariable geográfica (no es factor latente)
-  left_join(state_covar %>% select(loan_id, state_ord, property_state),
-            by = "loan_id")
+  # state_ord como covariable geográfica (no factor latente)
+  left_join(
+    state_covar %>% select(loan_id, state_ord, property_state),
+    by = "loan_id"
+  )
 
 cat("  Dimensiones del espacio latente:", nrow(latent_space), "×", ncol(latent_space), "\n")
 print(head(latent_space, 3))
@@ -459,76 +483,128 @@ write_csv(latent_space, file.path(OUTPUT_DIR, "latent_space_unified.csv"))
 cat("\n✔ latent_space_unified.csv guardado en:", OUTPUT_DIR, "\n")
 
 # =============================================================================
-# VISUALIZACIONES RESUMEN
+# VISUALIZACIONES RESUMEN  (PNG — sin PDF)
 # =============================================================================
 
-# 1. Heatmaps de matrices de correlación por bloque
-pdf(file.path(OUTPUT_DIR, "correlation_heatmaps.pdf"), width = 12, height = 10)
+# ── Construir b2_cor_mat para visualización ───────────────────────────────────
+# Bug corregido: b2_cor no existe → construir aquí desde b2_data
+b2_cor_mat <- cor(b2_data, use = "pairwise.complete.obs")
 
-par(mfrow = c(1, 3))
-corrplot(b1_cor$cor_mat, method = "color", tl.cex = 0.7,
-         title = "B1: Originación", mar = c(0,0,2,0))
-corrplot(b2_cor$cor_mat, method = "color", tl.cex = 0.7,
-         title = "B2: Comportamiento", mar = c(0,0,2,0))
-corrplot(b3_cor$cor_mat, method = "color", tl.cex = 0.7,
-         title = "B3: Contextual", mar = c(0,0,2,0))
+# ── 1. Heatmaps de correlación por bloque ─────────────────────────────────────
+png(file.path(OUTPUT_DIR, "fig01_correlation_heatmaps.png"),
+    width = 2800, height = 900, res = 150)
+par(mfrow = c(1, 3), mar = c(2, 2, 4, 2))
+
+corrplot(b1_cor$cor_mat,
+         method = "color", tl.cex = 0.65, addCoef.col = "black",
+         number.cex = 0.45, cl.cex = 0.65,
+         title = "B1: Originación", mar = c(0, 0, 3, 0))
+
+corrplot(b2_cor_mat,
+         method = "color", tl.cex = 0.65, addCoef.col = "black",
+         number.cex = 0.55, cl.cex = 0.65,
+         title = "B2: Comportamiento", mar = c(0, 0, 3, 0))
+
+corrplot(b3_cor$cor_mat,
+         method = "color", tl.cex = 0.65, addCoef.col = "black",
+         number.cex = 0.55, cl.cex = 0.65,
+         title = "B3: Contextual", mar = c(0, 0, 3, 0))
+
 dev.off()
+cat("✔ fig01_correlation_heatmaps.png guardado\n")
 
-# 2. Diagramas de sendero AFC
-pdf(file.path(OUTPUT_DIR, "path_diagrams_AFC.pdf"), width = 14, height = 10)
+# ── 2. Diagramas de sendero AFC (B1 y B3 — B2 no tiene AFC) ──────────────────
+# Bug corregido: semPaths(b2_afc$fit) eliminado — B2 no tiene AFC
 
-semPaths(b1_afc$fit, what = "std", layout = "tree2",
-         title = TRUE, style = "lisrel",
-         edge.label.cex = 0.7, residuals = FALSE,
-         main = "AFC Bloque 1 — Originación")
-
-semPaths(b2_afc$fit, what = "std", layout = "tree2",
-         title = TRUE, style = "lisrel",
-         edge.label.cex = 0.7, residuals = FALSE,
-         main = "AFC Bloque 2 — Comportamiento")
-
-semPaths(b3_afc$fit, what = "std", layout = "tree2",
-         title = TRUE, style = "lisrel",
-         edge.label.cex = 0.7, residuals = FALSE,
-         main = "AFC Bloque 3 — Contextual")
+png(file.path(OUTPUT_DIR, "fig02_path_diagram_b1_originacion.png"),
+    width = 1800, height = 1200, res = 150)
+semPaths(b1_afc$fit,
+         what          = "std",
+         layout        = "tree2",
+         style         = "lisrel",
+         edge.label.cex = 0.7,
+         residuals     = FALSE,
+         title         = FALSE)
+title("AFC Bloque 1 — Originación (cargas estandarizadas)", cex.main = 1.1)
 dev.off()
+cat("✔ fig02_path_diagram_b1_originacion.png guardado\n")
 
-# 3. Distribución de factor scores del espacio latente
-score_cols <- names(latent_space)[-1]
+png(file.path(OUTPUT_DIR, "fig03_path_diagram_b3_contextual.png"),
+    width = 1200, height = 900, res = 150)
+semPaths(b3_afc$fit,
+         what          = "std",
+         layout        = "tree2",
+         style         = "lisrel",
+         edge.label.cex = 0.7,
+         residuals     = FALSE,
+         title         = FALSE)
+title("AFC Bloque 3 — Contextual (cargas estandarizadas)", cex.main = 1.1)
+dev.off()
+cat("✔ fig03_path_diagram_b3_contextual.png guardado\n")
+
+# ── 3. Distribución de factor scores del espacio latente ─────────────────────
+# Bug corregido: aes_string() obsoleto → aes(x = .data[[col]])
+# Bug corregido: código duplicado eliminado — solo esta versión
+score_cols <- latent_space %>%
+  select(where(is.numeric)) %>%
+  names()
+
 p_list <- lapply(score_cols, function(col) {
-  ggplot(latent_space, aes_string(x = col)) +
+  ggplot(latent_space, aes(x = .data[[col]])) +
     geom_histogram(bins = 30, fill = "#2E86C1", color = "white", alpha = 0.8) +
-    theme_minimal() +
+    theme_minimal(base_size = 9) +
     labs(title = col, x = NULL, y = "n")
 })
 
-pdf(file.path(OUTPUT_DIR, "latent_score_distributions.pdf"),
-    width = 14, height = ceiling(length(score_cols) / 3) * 3)
-do.call(grid.arrange, c(p_list, ncol = 3))
-dev.off()
+n_cols_plot <- 3
+n_rows_plot <- ceiling(length(score_cols) / n_cols_plot)
 
-cat("\n✔ Visualizaciones exportadas a:", OUTPUT_DIR, "\n")
+png(file.path(OUTPUT_DIR, "fig04_latent_score_distributions.png"),
+    width = 400 * n_cols_plot, height = 320 * n_rows_plot, res = 100)
+do.call(grid.arrange, c(p_list, ncol = n_cols_plot))
+dev.off()
+cat("✔ fig04_latent_score_distributions.png guardado\n")
 
 # =============================================================================
-# RESUMEN FINAL DE AJUSTE
+# RESUMEN FINAL DE AJUSTE AFC
 # =============================================================================
 cat("\n", strrep("=", 70), "\n")
 cat("RESUMEN DE AJUSTE AFC\n")
 cat(strrep("=", 70), "\n")
 
+# Bug corregido: b2_afc no existe → fila de B2 reporta índice compuesto (no AFC)
+cat("B1 Originación — índices AFC (lavaan MLR):\n")
+print(round(b1_afc$indices, 4))
+
+cat("\nB2 Comportamiento — índice compuesto (no AFC):\n")
+cat("  Método: rowMeans de 4 variables estandarizadas\n")
+cat("  Alpha de Cronbach:", round(alpha_b2$total$raw_alpha, 3), "\n")
+cat("  N válido:", sum(!is.na(df$indice_comportamiento)), "\n")
+cat("  Rango: [",
+    round(min(df$indice_comportamiento, na.rm = TRUE), 3), ",",
+    round(max(df$indice_comportamiento, na.rm = TRUE), 3), "]\n")
+
+cat("\nB3 Contextual — índices AFC (lavaan MLR, just-identified df=0):\n")
+print(round(b3_afc$indices, 4))
+
+# Tabla resumen
 fit_summary <- tibble(
-  Bloque       = c("B1 Originación","B2 Comportamiento","B3 Contextual"),
-  CFI          = c(b1_afc$indices["cfi"],  b2_afc$indices["cfi"],  b3_afc$indices["cfi"]),
-  TLI          = c(b1_afc$indices["tli"],  b2_afc$indices["tli"],  b3_afc$indices["tli"]),
-  RMSEA        = c(b1_afc$indices["rmsea"],b2_afc$indices["rmsea"],b3_afc$indices["rmsea"]),
-  SRMR         = c(b1_afc$indices["srmr"], b2_afc$indices["srmr"], b3_afc$indices["srmr"]),
-  Aprobado     = c(b1_afc$passed,          b2_afc$passed,          b3_afc$passed)
+  Bloque       = c("B1 Originación", "B2 Comportamiento*", "B3 Contextual"),
+  CFI          = c(round(b1_afc$indices["cfi"],   3), NA_real_, round(b3_afc$indices["cfi"],   3)),
+  TLI          = c(round(b1_afc$indices["tli"],   3), NA_real_, round(b3_afc$indices["tli"],   3)),
+  RMSEA        = c(round(b1_afc$indices["rmsea"], 4), NA_real_, round(b3_afc$indices["rmsea"], 4)),
+  SRMR         = c(round(b1_afc$indices["srmr"],  4), NA_real_, round(b3_afc$indices["srmr"],  4)),
+  Aprobado     = c(b1_afc$passed,                 TRUE,        b3_afc$passed),
+  Nota         = c("AFC MLR",
+                   paste0("Índice compuesto α=",
+                          round(alpha_b2$total$raw_alpha, 3)),
+                   "Just-identified (df=0)")
 )
 
 print(fit_summary)
+cat("\n* B2 usa índice compuesto (rowMeans) por falta de AFC identificado.\n")
 cat("\n✔ Análisis completado.\n")
-cat("Próximo paso: usar latent_space_unified.csv para clustering (k-means / GMM)\n")
-cat("y/o entrenamiento de VAE.\n")
+cat("Próximo paso: usar latent_space_unified.csv para clustering / VAE.\n")
 
 
 ##################################################################
